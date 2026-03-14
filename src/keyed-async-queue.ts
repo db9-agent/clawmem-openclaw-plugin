@@ -1,21 +1,26 @@
 /**
- * A simple keyed async queue that serializes async tasks per key.
- * Inlined to avoid dependency on openclaw plugin-sdk internals that
- * may not be available in older OpenClaw versions.
+ * A keyed async queue that serializes async tasks per key.
+ * Inlined from openclaw/plugin-sdk/keyed-async-queue to avoid
+ * dependency on platform internals that may not exist in older versions.
+ *
+ * Matches the behaviour of the upstream implementation: a failed task
+ * does not block subsequent tasks on the same key.
  */
 export class KeyedAsyncQueue {
-  private queues = new Map<string, Promise<unknown>>();
+  private readonly tails = new Map<string, Promise<void>>();
 
-  async enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const prev = this.queues.get(key) ?? Promise.resolve();
-    const next = prev.then(() => task(), () => task());
-    this.queues.set(key, next);
-    try {
-      return await next;
-    } finally {
-      if (this.queues.get(key) === next) {
-        this.queues.delete(key);
-      }
-    }
+  enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const current = (this.tails.get(key) ?? Promise.resolve())
+      .catch(() => void 0)
+      .then(task);
+    const tail = current.then(
+      () => void 0,
+      () => void 0,
+    );
+    this.tails.set(key, tail);
+    tail.finally(() => {
+      if (this.tails.get(key) === tail) this.tails.delete(key);
+    });
+    return current;
   }
 }
